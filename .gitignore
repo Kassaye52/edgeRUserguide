@@ -1,0 +1,19 @@
+# Large data files
+BAM/
+FASTQ/
+Ref/
+GSE60450_RAW/
+GSE60450_RAW.tar
+
+# Excel files
+*.xls
+*.xlsx
+
+# PDFs
+*.pdf
+
+# Mac junk
+.DS_Store
+
+# R artifacts
+*.rds

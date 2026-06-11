@@ -1,0 +1,415 @@
+---
+title: "edgeR"
+output: html_document
+date: "2026-06-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+          # Chapter 4: Case studies
+          
+      # 4.1 RNA-Seq of oral carcinomas vs matched normal tissue
+      
+```{r}
+# 4.1.2 Reading in the data
+library(edgeR)
+
+rawdata <- read.delim(
+  "/Users/kbelay01tufts.edu/Desktop/Papers/edgeR_Practice/TableS1_edgeR_count_table.txt",
+  check.names = FALSE,
+  stringsAsFactors = FALSE
+)
+head(rawdata)
+dim(rawdata)
+```
+
+```{r}
+y <- DGEList(
+  counts = rawdata[, 4:9],
+  genes  = rawdata[, 1:3]
+)
+
+y
+```
+
+```{r}
+### 4.1.3 Annotation
+# BiocManager::install(
+#   c("org.Hs.eg.db", "AnnotationDbi"),
+#   ask = FALSE,
+#   update = FALSE
+# )
+library(org.Hs.eg.db)
+idfound <- y$genes$RefSeqID %in% mappedRkeys(org.Hs.egREFSEQ)
+y <- y[idfound,]
+dim(y)
+```
+
+```{r}
+# We add Entrez Gene IDs to the annotation
+egREFSEQ <- toTable(org.Hs.egREFSEQ)
+head(egREFSEQ)
+```
+```{r}
+m <- match(y$genes$RefSeqID, egREFSEQ$accession)
+y$genes$EntrezGene <- egREFSEQ$gene_id[m]
+head(m)
+```
+ 
+```{r}
+# Now use the Entrez Gene IDs to update the gene symbols:
+egSYMBOL <- toTable(org.Hs.egSYMBOL)
+head(egSYMBOL)
+```
+ 
+```{r}
+m <- match(y$genes$EntrezGene, egSYMBOL$gene_id)
+y$genes$Symbol <- egSYMBOL$symbol[m]
+head(y$genes)
+```
+ 
+           ## 4.1.4 Filtering and normalization
+```{r}
+o <- order(rowSums(y$counts), decreasing=TRUE)
+head(o)
+y <- y[o,]
+head(y)
+```
+           
+```{r}
+d <- duplicated(y$genes$Symbol)
+head(d)
+y <- y[!d,]
+nrow(y)
+```
+
+```{r}
+# Recompute the library sizes:
+y$samples$lib.size <- colSums(y$counts)
+```
+
+```{r}
+# Use Entrez Gene IDs as row names:
+rownames(y$counts) <- rownames(y$genes) <- y$genes$EntrezGene
+y$genes$EntrezGene <- NULL
+```
+
+```{r}
+# TMM normalization is applied to this dataset to account for compositional difference between the libraries.
+y <- normLibSizes(y)
+head(y$samples)
+```
+
+       # 4.1.5 Data exploration
+```{r}
+plotMDS(y)
+```
+       
+        # 4.1.6 Design matrix
+```{r}
+Patient <- factor(c(8,8,33,33,51,51))
+Tissue <- factor(c("N","T","N","T","N","T"))
+data.frame(Sample=colnames(y),Patient,Tissue)
+```
+        
+```{r}
+design <- model.matrix(~Patient+Tissue)
+rownames(design) <- colnames(y)
+design
+```
+
+    # 4.1.7 Dispersion estimation
+```{r}
+y <- estimateDisp(y, design, robust=TRUE)
+y$common.dispersion
+```
+
+```{r}
+plotBCV(y)
+```
+
+    # 4.1.8 Differential expression
+```{r}
+fit <- glmFit(y, design)
+```
+    
+```{r}
+
+```
+    
+    # Conduct likelihood ratio tests for tumour vs normal tissue differences and show the top genes:
+```{r}
+lrt <- glmLRT(fit)
+topTags(lrt)
+```
+```{r}
+colnames(design)
+```
+    
+```{r}
+o <- order(lrt$table$PValue)
+cpm(y)[o[1:10],]
+```
+    
+```{r}
+summary(decideTests(lrt))
+```
+    
+```{r}
+plotMD(lrt)
+abline(h=c(-1, 1), col="blue")
+```
+    
+    # 4.1.9 Gene ontology analysis
+```{r}
+# if (!requireNamespace("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# 
+# BiocManager::install("GO.db")
+library(GO.db)
+go <- goana(lrt)
+topGO(go, ont="BP", sort="Up", n=30, truncate=30)
+```
+    
+    
+    # 4.2 RNA-Seq of pathogen inoculated arabidopsis with batch effects
+```{r}
+library(edgeR)
+
+# Make a Data folder inside your current working directory
+dir.create("Data", showWarnings = FALSE)
+
+# Download the Arabidopsis count data
+download.file(
+  url = "https://bioinf.wehi.edu.au/edgeR/UserGuideData/arab.rds",
+  destfile = "Data/arab.rds",
+  mode = "wb"
+)
+
+# Read the data
+arab <- readRDS("Data/arab.rds")
+
+# Check it
+head(arab)
+dim(arab)
+```
+```{r}
+arab <- readRDS("/Users/kbelay01tufts.edu/Desktop/Papers/edgeR_Practice/Data/arab.rds")
+head(arab)
+```
+    
+```{r}
+Treat <- factor(substring(colnames(arab),1,4))
+Treat <- relevel(Treat, ref="mock")
+Time <- factor(substring(colnames(arab),5,5))
+head(Treat)
+```
+    
+```{r}
+# We then create a DGEList object:
+y <- DGEList(counts=arab, group=Treat)
+head(y)
+```
+    
+    # 4.2.4 Filtering and normalization
+```{r}
+keep <- filterByExpr(y)
+table(keep)
+```
+    
+```{r}
+y <- y[keep, , keep.lib.sizes=FALSE]
+head(y)
+```
+    
+    The TMM normalization is applied to account for the compositional biases:
+```{r}
+y <- normLibSizes(y)
+y$samples
+```
+    
+    4.2.5 Data exploration
+```{r}
+plotMDS(y, col=rep(1:2, each=3))
+```
+    
+```{r}
+design <- model.matrix(~Time+Time:Treat)
+logFC <- predFC(y,design,prior.count=1,dispersion=0.05)
+head(logFC)
+```
+```{r}
+cor(logFC[,4:6])
+```
+```{r}
+design <- model.matrix(~Time+Treat)
+rownames(design) <- colnames(y)
+design
+```
+    
+    4.2.7 Dispersion estimation
+```{r}
+y <- estimateDisp(y, design, robust = TRUE)
+y$common.dispersion
+```
+    
+```{r}
+plotBCV(y)
+```
+    
+```{r}
+fit <- glmQLFit(y, design, robust=TRUE)
+plotQLDisp(fit)
+```
+    
+    4.2.8 Differential expression
+    
+```{r}
+qlf <- glmQLFTest(fit, coef = 2:3)
+topTags(qlf)
+```
+
+```{r}
+FDR <- p.adjust(qlf$table$PValue, method="BH")
+sum(FDR<0.05)
+```
+  
+```{r}
+qlf <- glmQLFTest(fit)
+topTags(qlf)
+``` 
+
+```{r}
+top <- rownames(topTags(qlf))
+cpm(y)[top,]
+```
+
+```{r}
+summary(decideTests(qlf))
+```
+```{r}
+plotMD(qlf)
+abline(h=c(-1,1), col="blue")
+```
+
+
+
+          ########## 4.3 Profiles of Yoruba HapMap individuals
+```{r}
+# BiocManager::install("tweeDEseqCountData")
+library(tweeDEseqCountData)
+
+data(pickrell1)
+Counts <- exprs(pickrell1.eset)
+dim(Counts)
+```
+          
+```{r}
+Counts[1:5,1:5]
+```
+```{r}
+Gender <- pickrell1.eset$gender
+table(Gender)
+```
+
+```{r}
+rm(pickrell1.eset)
+```
+
+```{r}
+data(annotEnsembl63)
+annot <- annotEnsembl63[,c("Symbol","Chr")]
+head(annot)
+#annot[1:5,]
+```
+```{r}
+rm(annotEnsembl63)
+```
+
+```{r}
+y <- DGEList(counts=Counts, genes=annot[rownames(Counts),])
+```
+
+```{r}
+# 4.3.3 Filtering and normalization
+isexpr <- filterByExpr(y, group=Gender)
+table(isexpr)
+```
+
+```{r}
+hasannot <- rowSums(is.na(y$genes))==0
+y <- y[isexpr & hasannot, , keep.lib.sizes=FALSE]
+dim(y)
+```
+
+```{r}
+barplot(y$samples$lib.size*1e-6, names=1:69, ylab="Library size (millions)")
+```
+
+```{r}
+design <- model.matrix(~Gender)
+y <- estimateDisp(y, design, robust=TRUE)
+plotBCV(y)
+```
+
+```{r}
+fit <- glmQLFit(y, design, robust=TRUE)
+plotQLDisp(fit)
+```
+
+```{r}
+qlf <- glmQLFTest(fit)
+topTags(qlf, n=15)
+```
+```{r}
+summary(decideTests(qlf))
+```
+
+```{r}
+data(genderGenes)
+Ymale <- rownames(y) %in% msYgenes
+Xescape <- rownames(y) %in% XiEgenes
+```
+
+```{r}
+index <- list(Y=Ymale, X=Xescape)
+fry(y, index=index, design=design)
+```
+
+```{r}
+barcodeplot(qlf$table$logFC, index[[1]], index[[2]])
+```
+
+```{r}
+camera(y, index, design)
+```
+
+```{r}
+with(qlf$table, plot(logCPM,logFC,pch=16,cex=0.2))
+with(qlf$table, points(logCPM[Ymale],logFC[Ymale],pch=16,col="red"))
+with(qlf$table, points(logCPM[Xescape],logFC[Xescape],pch=16,col="dodgerblue"))
+legend("bottomleft",legend=c("Ymale genes","Xescape genes"), pch=16,col=c("red","dodgerblue"))
+```
+
+     ## 4.4 RNA-Seq profiles of mouse mammary gland
+```{r}
+# cat > targets.txt <<'EOF'
+# FileName	GEOAccession	CellType	Status
+# SRR1552450.fastq	GSM1480297	B	virgin
+# SRR1552451.fastq	GSM1480298	B	virgin
+# SRR1552452.fastq	GSM1480299	B	pregnant
+# SRR1552453.fastq	GSM1480300	B	pregnant
+# SRR1552454.fastq	GSM1480301	B	lactate
+# SRR1552455.fastq	GSM1480302	B	lactate
+# SRR1552444.fastq	GSM1480291	L	virgin
+# SRR1552445.fastq	GSM1480292	L	virgin
+# SRR1552446.fastq	GSM1480293	L	pregnant
+# SRR1552447.fastq	GSM1480294	L	pregnant
+# SRR1552448.fastq	GSM1480295	L	lactate
+# SRR1552449.fastq	GSM1480296	L	lactate
+# EOF
+```
+     
+     
